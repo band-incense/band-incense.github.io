@@ -362,21 +362,51 @@ void main(){
   float smokeShape = mask * volume * rising;
 
   /* ── 연기가 로고 형태로 응결한다 ────────────────── */
-  /* 로고 회전. 한 바퀴에 약 48초.
-     - 더 빠르게: 0.13 을 키운다
-     - 멈추려면: 0.13 을 0.0 으로
-     - 계속 도는 대신 좌우로 살짝 흔들리게 하려면 아래 ang 줄을
-       float ang = sin(t * 0.35) * 0.10;  으로 바꾸면 된다 */
-  float ang = t * 0.13;
-  mat2 rot = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
+  /* ── 로고를 Y축으로 자전시킨다 (지구처럼) ──────────────
+     평면을 3D로 세워 돌린 뒤, 화면 좌표에서 원래 텍스처 좌표를
+     역으로 계산한다. 원근이 들어가 있어 가까운 쪽이 크게 보인다.
+     - 속도: 아래 0.40 (한 바퀴 약 16초)
+     - 원근 강도: Dcam 을 낮추면 왜곡이 커진다 */
+  float ang = t * 0.40;
+  float cs  = cos(ang);
+  float sn  = sin(ang);
+  float Dcam = 2.9;
 
-  /* 응결 전에는 로고를 크게 부풀리고 연기 노이즈로 흩뜨려 둔다.
-     gather 가 오르면 제자리로 수축하면서 흩어진 연기가 한데 모인다. */
+  /* 응결 전에는 로고를 크게 부풀리고 연기 노이즈로 찢어 흩어 둔다 */
   float spread = mix(2.45, 1.0, gather);
   vec2  disp   = w.xy * (1.0 - gather) * 0.40;
 
-  vec2 luv = (rot * (uv - vec2(0.0, uLogoY))) / (uLogoSize * spread) + 0.5 + disp;
+  vec2 halfSz = uLogoSize * 0.5 * spread;
+  vec2 rel = uv - vec2(0.0, uLogoY);
+
+  float Xn = rel.x / halfSz.x;
+  float Yn = rel.y / halfSz.y;
+
+  /* 화면 x -> 판 위의 u 를 역산 */
+  float denom = Dcam * cs - Xn * sn;
+  float safe  = smoothstep(0.05, 0.22, abs(denom)) * smoothstep(0.02, 0.14, abs(cs));
+
+  float un = Xn * Dcam / (abs(denom) < 0.001 ? 0.001 : denom);
+  float persp = Dcam / (Dcam + un * sn);
+  float vn = Yn / max(persp, 0.001);
+
+  /* 뒷면일 때 글자가 좌우로 뒤집히지 않도록 텍스처만 되짚는다 */
+  float uTex = un * (cs < 0.0 ? -1.0 : 1.0);
+
+  vec2 luv = vec2(uTex * 0.5 + 0.5, vn * 0.5 + 0.5) + disp;
   vec2 e = 1.5 / (uLogoSize * spread) / uRes.y;
+
+  /* 면이 정면을 볼수록, 카메라에 가까울수록 밝다 */
+  float facing = abs(cs);
+  float shade = (0.58 + 0.42 * facing) * (0.86 + 0.28 * clamp(persp - 0.72, 0.0, 1.0));
+  shade *= (cs < 0.0 ? 0.88 : 1.0);
+  shade *= safe;
+
+  /* 완전히 옆을 볼 때 얇은 단면만 남는다 */
+  float edgeOn = 1.0 - smoothstep(0.0, 0.18, facing);
+  float sliver = edgeOn
+               * exp(-(rel.x * rel.x) / (halfSz.x * halfSz.x * 0.00035))
+               * (1.0 - smoothstep(0.80, 1.0, abs(Yn)));
 
   float a0 = texture2D(uLogo, luv).a;
   float aR = texture2D(uLogo, luv + vec2(e.x, 0.0)).a;
@@ -407,7 +437,7 @@ void main(){
   /* 핵심: 연기와 로고를 겹쳐 페이드하는 게 아니라, 연기를 담는 '틀'만
      기둥에서 로고 실루엣으로 바꾼다. 연기 결은 그대로 흐르므로
      같은 연기가 로고 모양으로 모여드는 것처럼 보인다. */
-  float logoShape = smoothstep(0.06, 0.50, soft) * 1.08;
+  float logoShape = smoothstep(0.06, 0.50, soft) * 1.28 * shade + sliver * 0.55 * gather;
   float shape = mix(smokeShape, logoShape, gather);
 
   /* 응결이 진행될수록 결이 고르게 정리된다 */
