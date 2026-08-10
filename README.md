@@ -293,7 +293,7 @@ void main(){
 
   /* 층류 → 난류 전이.
      실제 향 연기는 한동안 곧게 오르다 특정 높이에서 갑자기 흐트러진다. */
-  float lam = smoothstep(0.26, 0.82, h);
+  float lam = smoothstep(0.08, 0.72, h);
 
   /* 중심선을 흔드는 파동. 위상이 높이에 따라 달라지므로
      좌우로 밀리는 게 아니라 S자로 굽이치며 위로 전달된다. */
@@ -306,21 +306,21 @@ void main(){
   float wander = fbm(vec3(0.0, p.y * 1.10 - t * 0.22, t * 0.08)) * 0.72;
 
   /* 흔들림의 폭은 위로 갈수록 커진다 */
-  float amp  = smoothstep(0.015, 0.42, h) * (0.030 + h * h * 0.235);
+  float amp  = smoothstep(0.0, 0.26, h) * (0.048 + h * h * 0.215);
   float push = uMouse.x * 0.055 * h * h;
   /* 폭은 세로 화면에서 좁히되, 굽이까지 같이 줄이면 곧은 바늘이 된다 */
   float swayScale = mix(1.0, narrow, 0.70);
   float centre = ((wave * 0.42 + wander) * amp + push) * swayScale;
 
   /* 연기 폭: 아래는 실처럼 가늘고, 전이 후 빠르게 확산 */
-  float width = (0.010 + h * 0.030 + lam * lam * 0.19) * narrow;
+  float width = (0.011 + h * 0.088 + h * h * 0.185) * narrow;
   float lateral = (p.x - centre) / width;
 
   /* 노이즈를 중심선 기준으로 뽑는다 → 결이 굽이를 따라 흐른다 */
   vec3 q = vec3((p.x - centre) * 2.6, p.y * 1.05 - t * 0.20, t * 0.05);
 
   /* 도메인 워핑 — 층류 구간에서는 거의 걸지 않는다 */
-  float turb = 0.015 + lam * lam * 1.05;
+  float turb = 0.055 + lam * lam * 0.90;
   vec3 w = vec3(
     fbm(q * 1.30),
     fbm(q * 1.30 + vec3(5.2, 1.3, 2.8)),
@@ -329,9 +329,9 @@ void main(){
   float d = fbmR((q + w * turb) * 1.45);
 
   /* 리본 단면 — 위로 갈수록 가장자리가 무르게 풀린다 */
-  float column = exp(-lateral * lateral * (2.40 - lam * 0.70));
+  float column = exp(-lateral * lateral * (2.05 - lam * 0.45));
   float base   = smoothstep(-0.015, 0.045, p.y);
-  float top    = 1.0 - smoothstep(0.46, 0.99, p.y);
+  float top    = 1.0 - smoothstep(0.40, 1.02, p.y);
   float mask   = column * base * top;
 
   /* 층류 구간은 노이즈를 거의 안 먹여 매끈한 실로 남긴다 */
@@ -341,13 +341,13 @@ void main(){
   float body   = mix(0.80, grainy, lam);
 
   float volume = 0.66 + h * 1.15;
-  float plume = clamp(body * mask * volume, 0.0, 1.0);
 
-  /* 아래에서 위로 차오르는 상승 전선 — 로드 직후 연기가 솟구친다 */
+  /* 아래에서 위로 차오르는 상승 전선 — 윗면을 노이즈로 흐트러뜨린다 */
   float front  = mix(-0.62, 1.35, uRise);
   float frontN = fbm(vec3(uv.x * 2.6, 0.0, t * 0.35)) * 0.13;
   float rising = 1.0 - smoothstep(front + frontN, front + frontN + 0.30, uv.y);
-  plume *= rising;
+
+  float smokeShape = mask * volume * rising;
 
   /* ── 연기가 로고 형태로 응결한다 ────────────────── */
   float gather = uGather * uHasLogo;
@@ -373,30 +373,27 @@ void main(){
                * step(0.0, luv.y) * step(luv.y, 1.0);
   soft *= inRect;
 
-  /* 로고 표면의 질감 세 겹 */
-  float ln   = fbm(vec3(luv * 4.2 - vec2(0.0, t * 0.30), t * 0.18)) * 0.5 + 0.5;
+  /* 로고 표면의 질감 */
+  float ln     = fbm(vec3(luv * 4.2 - vec2(0.0, t * 0.30), t * 0.18)) * 0.5 + 0.5;
   float ripple = 0.5 + 0.5 * sin(luv.y * 58.0 - t * 2.4);
-  float dots = 0.5 + 0.5 * sin(gl_FragCoord.x * 2.7) * sin(gl_FragCoord.y * 2.7);
-
-  /* 응결 진행에 따라 문턱값이 내려가며 형태가 드러난다 */
-  float thr = mix(1.30, 0.24, gather);
-  float logoD = smoothstep(thr, thr + 0.30, soft + (ln - 0.5) * 0.75 * (1.0 - gather * 0.5));
+  float dots   = 0.5 + 0.5 * sin(gl_FragCoord.x * 2.7) * sin(gl_FragCoord.y * 2.7);
 
   /* 알파 기울기로 가장자리에 명암을 넣어 입체로 보이게 한다 */
   float relief = (aL2 - aR2) * 0.38 + (aU2 - aD2) * 0.62;
 
-  logoD *= (0.44 + 0.56 * ln) * (0.88 + 0.12 * ripple) * (0.90 + 0.10 * dots);
-  logoD += relief * 0.40 * step(0.02, soft) * (0.6 + 0.4 * ln);
-  logoD += soft * 0.13 * ln;
-  logoD *= gather;
-  logoD = clamp(logoD, 0.0, 1.0);
+  /* 핵심: 연기와 로고를 겹쳐 페이드하는 게 아니라, 연기를 담는 '틀'만
+     기둥에서 로고 실루엣으로 바꾼다. 연기 결은 그대로 흐르므로
+     같은 연기가 로고 모양으로 모여드는 것처럼 보인다. */
+  float logoShape = smoothstep(0.10, 0.46, soft) * 1.12;
+  float shape = mix(smokeShape, logoShape, gather);
 
-  /* 응결이 끝나면 아래 연기는 완전히 걷힌다 */
-  float logoBottom = uLogoY - uLogoSize.y * 0.5;
-  float belowLogo = 1.0 - smoothstep(logoBottom - 0.04, logoBottom + 0.12, uv.y);
-  float thread = plume * belowLogo * (1.0 - gather);
+  /* 응결이 진행될수록 결이 고르게 정리된다 */
+  float texel = mix(body, 0.58 + 0.42 * ln, gather * 0.85);
+  texel *= (0.90 + 0.10 * ripple) * (0.92 + 0.08 * dots);
 
-  float dens = clamp(max(mix(plume, thread, gather), logoD), 0.0, 1.0);
+  float dens = clamp(texel * shape, 0.0, 1.0);
+  dens += relief * 0.40 * step(0.02, soft) * gather * (0.6 + 0.4 * ln);
+  dens = clamp(dens, 0.0, 1.0);
 
   /* ── 색 ── */
   vec3 ink       = vec3(0.031, 0.027, 0.039);
@@ -553,10 +550,10 @@ void main(){
     /* 연출 순서: 연기가 빠르게 솟아오른 뒤(1.5초) 로고로 응결(1.2초) */
     var seq = logoReady ? (now - logoLoadedAt) / 1000 : 0.0;
 
-    var rise = Math.max(0, Math.min(1, seq / 2.9));
+    var rise = Math.max(0, Math.min(1, seq / 5.8));
     rise = 1 - Math.pow(1 - rise, 2.2);          /* 초반이 빠르게 */
 
-    var gather = Math.max(0, Math.min(1, (seq - 2.40) / 3.20));
+    var gather = Math.max(0, Math.min(1, (seq - 4.60) / 3.40));
     gather = gather * gather * (3 - 2 * gather);
 
     gl.uniform1f(uTime, reduced ? 12.0 : t);
