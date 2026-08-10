@@ -52,7 +52,7 @@
     min-height:100svh;
     display:grid;
     grid-template-rows:auto 1fr auto;
-    padding:clamp(20px,3.5vw,40px);
+    padding:clamp(14px,1.5vw,22px) clamp(16px,1.6vw,26px);
     pointer-events:none;
   }
   .hero a, .hero button{ pointer-events:auto; }
@@ -80,7 +80,7 @@
   }
   .nav a:hover, .nav a:focus-visible{ color:var(--bone); }
 
-  .mark{ white-space:nowrap; text-align:right; line-height:2; }
+  .mark{ white-space:nowrap; text-align:right; }
 
   /* ── 로고 아래 태그라인 ──────────────────── */
   .visually-hidden{
@@ -121,7 +121,7 @@
 
   @media (max-width:640px){
     .topbar{ flex-direction:column; gap:14px; }
-    .mark{ text-align:left; line-height:1.9; }
+    .mark{ text-align:left; }
     .footer{ flex-direction:column; align-items:flex-start; gap:18px; }
   
   @media (prefers-reduced-motion:reduce){
@@ -146,7 +146,7 @@
       <a href="#goods">Goods</a>
       <a href="#contact">Contact</a>
     </nav>
-    <div class="mark">Est. 2026 — Seoul<br>5-piece band</div>
+    <div class="mark">Est. 2026 — Seoul</div>
   </header>
 
   <h1 class="visually-hidden">INCENSE</h1>
@@ -173,12 +173,12 @@ precision highp float;
 uniform vec2  uRes;
 uniform float uTime;
 uniform vec2  uMouse;
-uniform float uIgnite;   // 0 → 1, 로드 직후 잔불이 붙는 연출
 uniform float uOct;      // 노이즈 옥타브 수 (기기 성능에 따라 조절)
 uniform sampler2D uLogo; // 로고 알파 텍스처
 uniform vec2  uLogoSize; // 로고의 가로/세로 크기 (uv 단위)
 uniform float uLogoY;    // 로고 중심의 세로 위치
 uniform float uGather;   // 0 = 연기, 1 = 로고로 응결 완료
+uniform float uRise;     // 연기가 아래에서 위로 차오르는 진행도
 uniform float uHasLogo;  // 텍스처 로드 완료 여부
 
 /* ── 3D Simplex Noise (Ashima Arts / Stefan Gustavson, MIT) ── */
@@ -322,46 +322,59 @@ void main(){
   float body   = mix(0.86, grainy, lam);
 
   float volume = 0.60 + h * 0.75;
-  float plume = clamp(body * mask * volume, 0.0, 1.0) * uIgnite;
+  float plume = clamp(body * mask * volume, 0.0, 1.0);
+
+  /* 아래에서 위로 차오르는 상승 전선 — 로드 직후 연기가 솟구친다 */
+  float front  = mix(-0.62, 1.30, uRise);
+  float rising = 1.0 - smoothstep(front, front + 0.22, uv.y);
+  plume *= rising;
 
   /* ── 연기가 로고 형태로 응결한다 ────────────────── */
   float gather = uGather * uHasLogo;
 
-  /* 로고 좌표계로 옮긴다 */
   vec2 luv = (uv - vec2(0.0, uLogoY)) / uLogoSize + 0.5;
+  vec2 e = 1.5 / uLogoSize / uRes.y;
 
-  /* 알파를 여러 번 떠서 부드러운 윤곽을 만든다 (연기처럼 번지게) */
-  vec2 e = 1.6 / uLogoSize / uRes.y;
-  float soft =
-      texture2D(uLogo, luv).a * 0.28
-    + texture2D(uLogo, luv + vec2( e.x, 0.0)).a * 0.12
-    + texture2D(uLogo, luv + vec2(-e.x, 0.0)).a * 0.12
-    + texture2D(uLogo, luv + vec2(0.0,  e.y)).a * 0.12
-    + texture2D(uLogo, luv + vec2(0.0, -e.y)).a * 0.12
-    + texture2D(uLogo, luv + e * 2.2).a * 0.06
-    + texture2D(uLogo, luv - e * 2.2).a * 0.06
-    + texture2D(uLogo, luv + vec2(e.x, -e.y) * 2.2).a * 0.06
-    + texture2D(uLogo, luv - vec2(e.x, -e.y) * 2.2).a * 0.06;
+  float a0 = texture2D(uLogo, luv).a;
+  float aR = texture2D(uLogo, luv + vec2(e.x, 0.0)).a;
+  float aL = texture2D(uLogo, luv - vec2(e.x, 0.0)).a;
+  float aU = texture2D(uLogo, luv + vec2(0.0, e.y)).a;
+  float aD = texture2D(uLogo, luv - vec2(0.0, e.y)).a;
+  float aR2 = texture2D(uLogo, luv + vec2(e.x, 0.0) * 2.8).a;
+  float aL2 = texture2D(uLogo, luv - vec2(e.x, 0.0) * 2.8).a;
+  float aU2 = texture2D(uLogo, luv + vec2(0.0, e.y) * 2.8).a;
+  float aD2 = texture2D(uLogo, luv - vec2(0.0, e.y) * 2.8).a;
 
-  /* 화면 밖은 로고가 없다 */
+  float soft = a0 * 0.28
+             + (aR + aL + aU + aD) * 0.12
+             + (aR2 + aL2 + aU2 + aD2) * 0.055;
+
   float inRect = step(0.0, luv.x) * step(luv.x, 1.0)
                * step(0.0, luv.y) * step(luv.y, 1.0);
   soft *= inRect;
 
-  /* 로고 안쪽에도 연기 결이 흐른다 */
-  float ln = fbm(vec3(uv * 3.1, t * 0.16)) * 0.5 + 0.5;
+  /* 로고 표면의 질감 세 겹 */
+  float ln   = fbm(vec3(luv * 4.2 - vec2(0.0, t * 0.30), t * 0.18)) * 0.5 + 0.5;
+  float ripple = 0.5 + 0.5 * sin(luv.y * 58.0 - t * 2.4);
+  float dots = 0.5 + 0.5 * sin(gl_FragCoord.x * 2.7) * sin(gl_FragCoord.y * 2.7);
 
   /* 응결 진행에 따라 문턱값이 내려가며 형태가 드러난다 */
-  float thr = mix(1.30, 0.26, gather);
-  float logoD = smoothstep(thr, thr + 0.30, soft + (ln - 0.5) * 0.70 * (1.0 - gather * 0.55));
-  logoD *= 0.58 + 0.42 * ln;
-  logoD += soft * 0.10 * ln * gather;   /* 옅은 잔무리 */
-  logoD *= gather;
+  float thr = mix(1.30, 0.24, gather);
+  float logoD = smoothstep(thr, thr + 0.30, soft + (ln - 0.5) * 0.75 * (1.0 - gather * 0.5));
 
-  /* 응결이 끝나면 위쪽 연기는 걷히고 로고로 향하는 실만 남는다 */
+  /* 알파 기울기로 가장자리에 명암을 넣어 입체로 보이게 한다 */
+  float relief = (aL2 - aR2) * 0.38 + (aU2 - aD2) * 0.62;
+
+  logoD *= (0.44 + 0.56 * ln) * (0.88 + 0.12 * ripple) * (0.90 + 0.10 * dots);
+  logoD += relief * 0.40 * step(0.02, soft) * (0.6 + 0.4 * ln);
+  logoD += soft * 0.13 * ln;
+  logoD *= gather;
+  logoD = clamp(logoD, 0.0, 1.0);
+
+  /* 응결이 끝나면 아래 연기는 완전히 걷힌다 */
   float logoBottom = uLogoY - uLogoSize.y * 0.5;
   float belowLogo = 1.0 - smoothstep(logoBottom - 0.04, logoBottom + 0.12, uv.y);
-  float thread = plume * belowLogo * (1.0 - 0.30 * gather);
+  float thread = plume * belowLogo * (1.0 - gather);
 
   float dens = clamp(max(mix(plume, thread, gather), logoD), 0.0, 1.0);
 
@@ -425,12 +438,12 @@ void main(){
   var uRes    = gl.getUniformLocation(prog, 'uRes');
   var uTime   = gl.getUniformLocation(prog, 'uTime');
   var uMouse  = gl.getUniformLocation(prog, 'uMouse');
-  var uIgnite = gl.getUniformLocation(prog, 'uIgnite');
   var uOct      = gl.getUniformLocation(prog, 'uOct');
   var uLogo     = gl.getUniformLocation(prog, 'uLogo');
   var uLogoSize = gl.getUniformLocation(prog, 'uLogoSize');
   var uLogoY    = gl.getUniformLocation(prog, 'uLogoY');
   var uGather   = gl.getUniformLocation(prog, 'uGather');
+  var uRise     = gl.getUniformLocation(prog, 'uRise');
   var uHasLogo  = gl.getUniformLocation(prog, 'uHasLogo');
 
   /* ── 로고 텍스처 ───────────────────────────────
@@ -485,8 +498,8 @@ void main(){
   /* 연기는 형태가 부드러워서 저해상도로 그려도 티가 나지 않는다.
      해상도를 낮춰 모바일 발열과 프레임 드랍을 막는다. */
   var isMobile = window.matchMedia('(max-width: 820px)').matches;
-  var scale = isMobile ? 0.50 : 0.68;
-  var octaves = isMobile ? 3.0 : 4.0;
+  var scale = isMobile ? 0.62 : 0.68;
+  var octaves = 4.0;
   gl.uniform1f(uOct, octaves);
 
   function resize(){
@@ -517,21 +530,18 @@ void main(){
 
     mx += (tmx - mx) * 0.035;
 
-    /* 로드 직후 4초에 걸쳐 잔불이 붙고 연기가 올라온다 */
-    var ignite = Math.min(t / 4.0, 1.0);
-    ignite = ignite * ignite * (3.0 - 2.0 * ignite);
+    /* 연출 순서: 연기가 빠르게 솟아오른 뒤(1.5초) 로고로 응결(1.2초) */
+    var seq = logoReady ? (now - logoLoadedAt) / 1000 : 0.0;
 
-    /* 연기가 다 올라온 뒤 로고로 응결한다 */
-    var gather = 0.0;
-    if(logoReady){
-      var g = ((now - logoLoadedAt) / 1000 - 2.2) / 3.4;
-      gather = Math.max(0.0, Math.min(1.0, g));
-      gather = gather * gather * (3.0 - 2.0 * gather);
-    }
+    var rise = Math.max(0, Math.min(1, seq / 1.5));
+    rise = 1 - Math.pow(1 - rise, 2.2);          /* 초반이 빠르게 */
+
+    var gather = Math.max(0, Math.min(1, (seq - 1.25) / 1.20));
+    gather = gather * gather * (3 - 2 * gather);
 
     gl.uniform1f(uTime, reduced ? 12.0 : t);
-    gl.uniform1f(uIgnite, reduced ? 1.0 : ignite);
     gl.uniform1f(uHasLogo, logoReady);
+    gl.uniform1f(uRise, reduced ? 1.0 : (logoReady ? rise : 0.0));
     gl.uniform1f(uGather, reduced ? logoReady : gather);
     gl.uniform2f(uMouse, mx, 0.0);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
