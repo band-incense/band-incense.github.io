@@ -331,14 +331,28 @@ void main(){
                 (p.y + pull.y) * 1.05 - t * 0.20,
                 t * 0.05);
 
-  /* 도메인 워핑 — 층류 구간에서는 거의 걸지 않는다 */
+  /* 1차 워핑 — 큰 덩어리 단위로 흐름을 휜다 */
   float turb = 0.30 + lam * lam * 1.55;
   vec3 w = vec3(
     fbm(q * 0.58),
     fbm(q * 0.58 + vec3(5.2, 1.3, 2.8)),
-    fbm(q * 0.58 + vec3(9.1, 7.4, 4.6))
+    0.0
   );
-  float d = fbmR((q + w * turb) * 1.45);
+  vec3 q1 = q + w * turb;
+
+  /* 2차 워핑 — 미세한 결이 큰 흐름에 끌려간다.
+     이 겹치기가 물결이 아니라 유체처럼 보이게 하는 핵심이다. */
+  vec3 w2 = vec3(
+    fbm(q1 * 2.10 + vec3(3.7, 1.9, 6.4)),
+    fbm(q1 * 2.10 + vec3(8.3, 5.1, 2.2)),
+    0.0
+  );
+  vec3 q2 = q1 + w2 * (0.09 + lam * 0.19);
+
+  /* 몸통은 일반 노이즈(뭉게뭉게), 아주 조금만 능선 노이즈(가는 올)를 섞는다 */
+  float d  = fbm(q2 * 1.70) * 0.5 + 0.5;
+  float dr = fbmR(q2 * 3.40);
+  d = d * 0.92 + dr * 0.08;
 
   /* 리본 단면 — 위로 갈수록 가장자리가 무르게 풀린다 */
   float column = exp(-pow(abs(lateral), 1.45) * (1.70 - lam * 0.45));
@@ -347,10 +361,10 @@ void main(){
   float mask   = column * base * top;
 
   /* 층류 구간은 노이즈를 거의 안 먹여 매끈한 실로 남긴다 */
-  float veins = smoothstep(0.66, 0.97, d);
-  float haze  = smoothstep(0.34, 0.86, d);
-  float grainy = veins * 0.80 + haze * 0.38;
-  float body   = grainy;
+  /* 옅은 연무 + 그 안에 밀도가 높은 심 — 실제 연기의 명암 구조 */
+  float haze = smoothstep(0.18, 0.88, d);
+  float core = smoothstep(0.58, 1.02, d);
+  float body = haze * 0.66 + core * 0.50;
 
   float volume = 0.66 + h * 1.15;
 
@@ -428,7 +442,6 @@ void main(){
 
   /* 로고 표면의 질감 */
   float ln     = fbm(vec3(luv * 4.2 - vec2(0.0, t * 0.30), t * 0.18)) * 0.5 + 0.5;
-  float ripple = 0.5 + 0.5 * sin(luv.y * 58.0 - t * 2.4);
   float dots   = 0.5 + 0.5 * sin(gl_FragCoord.x * 2.7) * sin(gl_FragCoord.y * 2.7);
 
   /* 알파 기울기로 가장자리에 명암을 넣어 입체로 보이게 한다 */
@@ -442,7 +455,7 @@ void main(){
 
   /* 응결이 진행될수록 결이 고르게 정리된다 */
   float texel = mix(body, 0.40 + 0.60 * ln, gather * 0.80);
-  texel *= (0.94 + 0.06 * ripple) * (0.95 + 0.05 * dots);
+  texel *= (0.96 + 0.04 * dots);
 
   float dens = clamp(texel * shape, 0.0, 1.0);
   dens += relief * 0.15 * step(0.02, soft) * gather * (0.55 + 0.45 * ln);
@@ -454,8 +467,8 @@ void main(){
   vec3 smokePale = vec3(0.880, 0.862, 0.828);
 
   vec3 col = ink;
-  col = mix(col, smokeDeep, clamp(dens * 2.7, 0.0, 1.0));
-  col = mix(col, smokePale, pow(dens, 1.7));
+  col = mix(col, smokeDeep, clamp(dens * 3.3, 0.0, 1.0));
+  col = mix(col, smokePale, pow(dens, 2.1));
 
   /* 비네트 + 필름 그레인 */
   col *= 1.0 - 0.34 * length(uv * vec2(0.70, 1.0));
