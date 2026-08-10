@@ -65,7 +65,7 @@
     align-items:flex-start;
     gap:24px;
     font-family:var(--mono);
-    font-size:clamp(14px,1.05vw,18px);
+    font-size:clamp(13px,0.9vw,15px);
     font-weight:300;
     letter-spacing:.16em;
     text-transform:uppercase;
@@ -307,11 +307,16 @@ void main(){
   float wander = fbm(vec3(0.0, p.y * 1.10 - t * 0.22, t * 0.08)) * 0.72;
 
   /* 흔들림의 폭은 위로 갈수록 커진다 */
+  /* 바람: 느린 주기 여러 개를 겹쳐 좌우로 밀린다. 위로 갈수록 크게 밀린다. */
+  float wind = sin(t * 0.37) * 0.55
+             + sin(t * 0.23 + 1.7) * 0.38
+             + sin(t * 0.61 + 4.2) * 0.16;
+
   float amp  = smoothstep(0.0, 0.26, h) * (0.048 + h * h * 0.215);
   float push = uMouse.x * 0.055 * h * h;
   /* 폭은 세로 화면에서 좁히되, 굽이까지 같이 줄이면 곧은 바늘이 된다 */
   float swayScale = mix(1.0, narrow, 0.70);
-  float centre = ((wave * 0.42 + wander) * amp + push) * swayScale;
+  float centre = ((wave * 0.42 + wander) * amp + push + wind * h * h * 0.20) * swayScale;
 
   /* 연기 폭: 아래는 실처럼 가늘고, 전이 후 빠르게 확산 */
   float widthN = 1.0 + wander * 0.62;
@@ -357,8 +362,21 @@ void main(){
   float smokeShape = mask * volume * rising;
 
   /* ── 연기가 로고 형태로 응결한다 ────────────────── */
-  vec2 luv = (uv - vec2(0.0, uLogoY)) / uLogoSize + 0.5;
-  vec2 e = 1.5 / uLogoSize / uRes.y;
+  /* 로고 회전. 한 바퀴에 약 48초.
+     - 더 빠르게: 0.13 을 키운다
+     - 멈추려면: 0.13 을 0.0 으로
+     - 계속 도는 대신 좌우로 살짝 흔들리게 하려면 아래 ang 줄을
+       float ang = sin(t * 0.35) * 0.10;  으로 바꾸면 된다 */
+  float ang = t * 0.13;
+  mat2 rot = mat2(cos(ang), -sin(ang), sin(ang), cos(ang));
+
+  /* 응결 전에는 로고를 크게 부풀리고 연기 노이즈로 흩뜨려 둔다.
+     gather 가 오르면 제자리로 수축하면서 흩어진 연기가 한데 모인다. */
+  float spread = mix(2.45, 1.0, gather);
+  vec2  disp   = w.xy * (1.0 - gather) * 0.40;
+
+  vec2 luv = (rot * (uv - vec2(0.0, uLogoY))) / (uLogoSize * spread) + 0.5 + disp;
+  vec2 e = 1.5 / (uLogoSize * spread) / uRes.y;
 
   float a0 = texture2D(uLogo, luv).a;
   float aR = texture2D(uLogo, luv + vec2(e.x, 0.0)).a;
@@ -384,20 +402,20 @@ void main(){
   float dots   = 0.5 + 0.5 * sin(gl_FragCoord.x * 2.7) * sin(gl_FragCoord.y * 2.7);
 
   /* 알파 기울기로 가장자리에 명암을 넣어 입체로 보이게 한다 */
-  float relief = (aL2 - aR2) * 0.38 + (aU2 - aD2) * 0.62;
+  float relief = (aL2 - aR2) * 0.30 + (aU2 - aD2) * 0.42;
 
   /* 핵심: 연기와 로고를 겹쳐 페이드하는 게 아니라, 연기를 담는 '틀'만
      기둥에서 로고 실루엣으로 바꾼다. 연기 결은 그대로 흐르므로
      같은 연기가 로고 모양으로 모여드는 것처럼 보인다. */
-  float logoShape = smoothstep(0.10, 0.46, soft) * 1.12;
+  float logoShape = smoothstep(0.06, 0.50, soft) * 1.08;
   float shape = mix(smokeShape, logoShape, gather);
 
   /* 응결이 진행될수록 결이 고르게 정리된다 */
-  float texel = mix(body, 0.58 + 0.42 * ln, gather * 0.85);
-  texel *= (0.90 + 0.10 * ripple) * (0.92 + 0.08 * dots);
+  float texel = mix(body, 0.40 + 0.60 * ln, gather * 0.80);
+  texel *= (0.94 + 0.06 * ripple) * (0.95 + 0.05 * dots);
 
   float dens = clamp(texel * shape, 0.0, 1.0);
-  dens += relief * 0.40 * step(0.02, soft) * gather * (0.6 + 0.4 * ln);
+  dens += relief * 0.15 * step(0.02, soft) * gather * (0.55 + 0.45 * ln);
   dens = clamp(dens, 0.0, 1.0);
 
   /* ── 색 ── */
@@ -559,7 +577,7 @@ void main(){
     rise = 1 - Math.pow(1 - rise, 2.2);          /* 초반이 빠르게 */
 
     var gather = Math.max(0, Math.min(1, (seq - 4.60) / 3.40));
-    gather = gather * gather * (3 - 2 * gather);
+    gather = Math.pow(gather, 1.9);   /* 천천히 모이다 끝에서 확 빨려든다 */
 
     gl.uniform1f(uTime, reduced ? 12.0 : t);
     gl.uniform1f(uHasLogo, logoReady);
