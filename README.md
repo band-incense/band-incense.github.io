@@ -52,7 +52,7 @@
     min-height:100svh;
     display:grid;
     grid-template-rows:auto 1fr auto;
-    padding:clamp(14px,1.5vw,22px) clamp(16px,1.6vw,26px);
+    padding:clamp(10px,1vw,14px) clamp(12px,1.1vw,16px);
     pointer-events:none;
   }
   .hero a, .hero button{ pointer-events:auto; }
@@ -256,6 +256,24 @@ float fbm(vec3 p){
   return sum;
 }
 
+/* 능선 노이즈: 1 - |noise| 를 겹쳐 실 같은 결을 만든다.
+   실제 연기 사진에서 보이는 가느다란 밝은 줄기가 이 방식으로 나온다. */
+float fbmR(vec3 p){
+  float sum = 0.0;
+  float amp = 0.5;
+  float norm = 0.0;
+  for(int i = 0; i < 5; i++){
+    if(float(i) >= uOct) break;
+    float n = 1.0 - abs(snoise(p));
+    n *= n;
+    sum  += amp * n;
+    norm += amp;
+    p *= 2.07;
+    amp *= 0.5;
+  }
+  return sum / norm;
+}
+
 float hash(vec2 p){
   return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
@@ -295,38 +313,40 @@ void main(){
   float centre = ((wave * 0.42 + wander) * amp + push) * swayScale;
 
   /* 연기 폭: 아래는 실처럼 가늘고, 전이 후 빠르게 확산 */
-  float width = (0.009 + h * 0.026 + lam * lam * 0.22) * narrow;
+  float width = (0.010 + h * 0.030 + lam * lam * 0.19) * narrow;
   float lateral = (p.x - centre) / width;
 
   /* 노이즈를 중심선 기준으로 뽑는다 → 결이 굽이를 따라 흐른다 */
   vec3 q = vec3((p.x - centre) * 2.6, p.y * 1.05 - t * 0.20, t * 0.05);
 
   /* 도메인 워핑 — 층류 구간에서는 거의 걸지 않는다 */
-  float turb = 0.015 + lam * lam * 0.85;
+  float turb = 0.015 + lam * lam * 1.05;
   vec3 w = vec3(
     fbm(q * 1.30),
     fbm(q * 1.30 + vec3(5.2, 1.3, 2.8)),
     fbm(q * 1.30 + vec3(9.1, 7.4, 4.6))
   );
-  float d = fbm((q + w * turb) * 1.60);
-  d = d * 0.5 + 0.5;
+  float d = fbmR((q + w * turb) * 1.45);
 
   /* 리본 단면 — 위로 갈수록 가장자리가 무르게 풀린다 */
-  float column = exp(-lateral * lateral * (2.60 - lam * 1.15));
+  float column = exp(-lateral * lateral * (2.40 - lam * 0.70));
   float base   = smoothstep(-0.015, 0.045, p.y);
   float top    = 1.0 - smoothstep(0.46, 0.99, p.y);
   float mask   = column * base * top;
 
   /* 층류 구간은 노이즈를 거의 안 먹여 매끈한 실로 남긴다 */
-  float grainy = smoothstep(0.29, 0.86, d);
-  float body   = mix(0.86, grainy, lam);
+  float veins = smoothstep(0.66, 0.97, d);
+  float haze  = smoothstep(0.34, 0.86, d);
+  float grainy = veins * 0.80 + haze * 0.38;
+  float body   = mix(0.80, grainy, lam);
 
-  float volume = 0.60 + h * 0.75;
+  float volume = 0.66 + h * 1.15;
   float plume = clamp(body * mask * volume, 0.0, 1.0);
 
   /* 아래에서 위로 차오르는 상승 전선 — 로드 직후 연기가 솟구친다 */
-  float front  = mix(-0.62, 1.30, uRise);
-  float rising = 1.0 - smoothstep(front, front + 0.22, uv.y);
+  float front  = mix(-0.62, 1.35, uRise);
+  float frontN = fbm(vec3(uv.x * 2.6, 0.0, t * 0.35)) * 0.13;
+  float rising = 1.0 - smoothstep(front + frontN, front + frontN + 0.30, uv.y);
   plume *= rising;
 
   /* ── 연기가 로고 형태로 응결한다 ────────────────── */
@@ -533,10 +553,10 @@ void main(){
     /* 연출 순서: 연기가 빠르게 솟아오른 뒤(1.5초) 로고로 응결(1.2초) */
     var seq = logoReady ? (now - logoLoadedAt) / 1000 : 0.0;
 
-    var rise = Math.max(0, Math.min(1, seq / 1.5));
+    var rise = Math.max(0, Math.min(1, seq / 2.9));
     rise = 1 - Math.pow(1 - rise, 2.2);          /* 초반이 빠르게 */
 
-    var gather = Math.max(0, Math.min(1, (seq - 1.25) / 1.20));
+    var gather = Math.max(0, Math.min(1, (seq - 2.40) / 3.20));
     gather = gather * gather * (3 - 2 * gather);
 
     gl.uniform1f(uTime, reduced ? 12.0 : t);
